@@ -1,3 +1,10 @@
+import type { Db } from "./db/sqlite";
+
+/** 运行上下文:本地依赖注入(目前只有数据库)。 */
+export interface Ctx {
+  db: Db;
+}
+
 export type JobStatus =
   | "pending"
   | "bootstrapping"
@@ -73,8 +80,3 @@ export interface ScrapeResult {
   reviews: Review[];
 }
 
-export interface Env {
-  DB: D1Database;
-  RAW: R2Bucket;
-  BROWSER: Fetcher;
-}

@@ -1,4 +1,5 @@
-import puppeteer from "@cloudflare/puppeteer";
+import { chromium } from "playwright";
+import { mkdir } from "node:fs/promises";
 import type { Session } from "../types";
 
 export function buildHeaders(
@@ -27,36 +28,56 @@ export function parseShopUuid(url: string): string {
 }
 
 export class CaptchaInterrupt extends Error {
-  constructor(public screenshotKey: string) { super("CAPTCHA_INTERRUPT"); }
+  constructor(public screenshotPath: string) {
+    super("CAPTCHA_INTERRUPT");
+    this.name = "CaptchaInterrupt";
+  }
+}
+
+export interface BootstrapOptions {
+  headless?: boolean;
+  proxyUrl?: string;
+  captchaTimeoutMs?: number;
 }
 
 /**
- * 打开商家页,建立会话。遇验证码:截图存 R2,抛 CaptchaInterrupt(编排层据此置 awaiting_human)。
- * proxyUrl 为可选——裸跑时不传;被风控后传入代理(设计:先裸跑触发再上)。
+ * 用真实浏览器打开商家页,建立会话(cookie/UA)。
+ * 有头模式下若检测到验证码:截图存本地,并轮询等待用户在可见浏览器里手动完成;
+ * 超时仍未通过则抛 CaptchaInterrupt(编排层据此置 awaiting_human)。
+ * proxyUrl 可选(设计:先裸跑,被风控再上代理)。
  */
 export async function bootstrapSession(
-  browserBinding: Fetcher,
-  r2: R2Bucket,
   merchantUrl: string,
   jobId: string,
-  proxyUrl?: string,
+  opts: BootstrapOptions = {},
 ): Promise<Session> {
-  const browser = await puppeteer.launch(browserBinding);
+  const browser = await chromium.launch({
+    headless: opts.headless ?? false,
+    proxy: opts.proxyUrl ? { server: opts.proxyUrl } : undefined,
+  });
   try {
-    const page = await browser.newPage();
-    await page.goto(merchantUrl, { waitUntil: "networkidle0" });
-    // RECON: page.evaluate runs in browser context; @ts-ignore needed because lib:dom is excluded from tsconfig
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    const bodyText = await page.evaluate(() => document.body.innerText);
-    if (isCaptchaPage(page.url(), bodyText)) {
-      const shot = await page.screenshot();
-      const key = `captcha/${jobId}.png`;
-      await r2.put(key, shot);
-      throw new CaptchaInterrupt(key);
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(merchantUrl, { waitUntil: "networkidle" });
+
+    const bodyText = async () => page.evaluate(() => document.body.innerText);
+    if (isCaptchaPage(page.url(), await bodyText())) {
+      await mkdir("./data/screenshots", { recursive: true });
+      const shotPath = `./data/screenshots/${jobId}.png`;
+      await page.screenshot({ path: shotPath });
+      console.log(`[captcha] 请在弹出的浏览器中完成验证(任务 ${jobId})。截图: ${shotPath}`);
+      const deadline = Date.now() + (opts.captchaTimeoutMs ?? 120000);
+      while (Date.now() < deadline) {
+        await page.waitForTimeout(2000);
+        if (!isCaptchaPage(page.url(), await bodyText())) break;
+      }
+      if (isCaptchaPage(page.url(), await bodyText())) {
+        throw new CaptchaInterrupt(shotPath);
+      }
     }
-    const cookies = await page.cookies();
-    const ua = await browser.userAgent();
+
+    const cookies = await context.cookies();
+    const ua = await page.evaluate(() => navigator.userAgent);
     return {
       headers: buildHeaders(cookies, ua, merchantUrl),
       shopUuid: parseShopUuid(merchantUrl),

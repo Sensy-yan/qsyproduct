@@ -1,8 +1,8 @@
-import type { Env, ScrapeResult, Session, Deal, DealItem, DealRule, Review } from "../types";
+import type { Ctx, ScrapeResult, Session, Deal, DealItem, DealRule, Review } from "../types";
 import { DianpingClient } from "./client";
 import { normalizeDealList, normalizeDealDetail, normalizeReviews } from "../parse/normalize";
 
-export async function scrapeMerchant(env: Env, session: Session, url: string): Promise<ScrapeResult> {
+export async function scrapeMerchant(ctx: Ctx, session: Session, url: string): Promise<ScrapeResult> {
   const client = new DianpingClient({
     fetchImpl: fetch,
     headers: session.headers,

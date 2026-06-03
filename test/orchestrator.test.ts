@@ -1,12 +1,11 @@
-import { env } from "cloudflare:test";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createDb, applySchema, type Db } from "../src/db/sqlite";
 import { runScrapeJob } from "../src/orchestrator";
 import { getJob } from "../src/db/job";
 
 describe("orchestrator", () => {
-  beforeEach(async () => {
-    await env.DB.exec("DELETE FROM job; DELETE FROM merchant; DELETE FROM deal; DELETE FROM deal_item; DELETE FROM deal_rule; DELETE FROM review;");
-  });
+  let db: Db;
+  beforeEach(() => { db = createDb(":memory:"); applySchema(db); });
 
   it("成功路径:job 置 done 且写入数据", async () => {
     const deps = {
@@ -20,10 +19,10 @@ describe("orchestrator", () => {
         reviews: [{ dealId: "d1", shopUuid: "shop1", rating: 5, text: "好", userMasked: "张*丰", reviewDate: 900 }],
       })),
     };
-    const jobId = await runScrapeJob(env, "u", deps);
-    const j = await getJob(env.DB, jobId);
+    const jobId = await runScrapeJob({ db }, "u", deps);
+    const j = await getJob(db, jobId);
     expect(j?.status).toBe("done");
-    const { results } = await env.DB.prepare("SELECT * FROM deal WHERE shop_uuid='shop1'").all();
+    const { results } = await db.prepare("SELECT * FROM deal WHERE shop_uuid='shop1'").all();
     expect(results).toHaveLength(1);
   });
 
@@ -31,11 +30,11 @@ describe("orchestrator", () => {
     const { CaptchaInterrupt } = await import("../src/session/bootstrap");
     const deps = {
       now: () => 1000,
-      bootstrap: vi.fn(async () => { throw new CaptchaInterrupt("captcha/x.png"); }),
+      bootstrap: vi.fn(async () => { throw new CaptchaInterrupt("p.png"); }),
       scrape: vi.fn(),
     };
-    const jobId = await runScrapeJob(env, "u", deps);
-    const j = await getJob(env.DB, jobId);
+    const jobId = await runScrapeJob({ db }, "u", deps);
+    const j = await getJob(db, jobId);
     expect(j?.status).toBe("awaiting_human");
     expect(deps.scrape).not.toHaveBeenCalled();
   });
