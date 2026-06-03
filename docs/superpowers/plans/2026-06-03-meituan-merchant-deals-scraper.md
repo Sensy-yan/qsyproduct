@@ -10,6 +10,8 @@
 
 **关键依赖:** Task 1(侦察)是网络相关任务(Task 9/10/11)的前置。侦察未完成前,可先并行实现与网络无关的任务(Task 2–8)。
 
+**范围变更(2026-06-03,用户追加):** 增加「最小单页界面」——输入商家 URL → 点击抓取 → 轮询状态 → 完成后展示团单列表 + 下载 CSV。由 Worker 直接返回内联 HTML,无前端构建步骤。为支撑界面新增:`GET /`(HTML 页)、`GET /merchants/:shopUuid/deals`(JSON,供表格渲染);并让 job 完成时在 `stats_json` 写入 `shopUuid`(供页面拿到后取数/导出)。详见文末 Task 15。
+
 ---
 
 ## 文件结构
@@ -1529,4 +1531,169 @@ Expected:out.csv 含真实团单行,价格/销量经字体解密为正常数字�
 - **机房 IP 被风控**:Task 14 若频繁 `awaiting_human`,按设计接入住宅/4G 代理(`bootstrapSession` 的 `proxyUrl` 参数 + client 经代理出网)。
 - **字体类型与预期不符**:Task 5 Step 5 落地 `font-internal.ts` 时若发现非轮廓匹配型加密,改用对应解法(如映射表型直接建 Map)。
 - **抓取超 Worker 时长上限**:`POST /jobs` 同步抓取在团单数多 + 1.5s 限速下可能逼近 Worker 请求时长上限(免费档 ~10ms CPU 误导,实为墙钟+子请求约束)。回退:把 `runScrapeJob` 移到 Cloudflare Queues 消费者或 Durable Object 中后台执行,`POST /jobs` 改为先 `createJob` 返回 jobId、再 enqueue,客户端轮询 `GET /jobs/:id`。spec §5.3 已预留 Queues 为可选依赖。
-- **Session 类型归属**:`Session` 接口当前定义于 `session/bootstrap.ts`,而 `scrape/run.ts` 从 `types.ts` 引用——执行 Task 12 时统一为「在 `types.ts` 定义 `Session`,`bootstrap.ts` import 之」,避免重复定义。
+- **Session 类型归属**:`Session` 接口当前定义于 `session/bootstrap.ts`,而 `scrape/run.ts` 从 `types.ts` 引用——执行 Task 12 时统一为「在 `types.ts` 定义 `Session`,`bootstrap.ts` import 之」,避免重复定义。(已在 Task 3 落实:`Session` 定义于 `types.ts`。)
+
+---
+
+## Task 15: 最小单页界面(2026-06-03 追加)
+
+由 Worker 内联返回 HTML,无前端构建。页面:输入商家 URL → 点「抓取」→ 轮询 `GET /jobs/:id` → 完成后用 `shopUuid` 拉团单 JSON 渲染表格 + 提供 CSV 下载。recon-无关(渲染 D1 中既有数据)。
+
+**前置改动:** 编排器(Task 12)在 job 完成时把 `shopUuid` 写入 `stats`,即 `stats: { deals, reviews, shopUuid }`,以便页面从 `GET /jobs/:id` 的 `stats_json` 取到。
+
+**Files:**
+- Modify: `src/index.ts`(在 Task 13 的 Hono 应用上新增 `GET /` 与 `GET /merchants/:shopUuid/deals`)
+- Create: `src/ui/page.ts`(导出 HTML 字符串,保持 index.ts 聚焦路由)
+- Test: `test/ui.test.ts`
+
+- [ ] **Step 1: 写失败测试**
+
+```ts
+import { env, SELF } from "cloudflare:test";
+import { describe, it, expect, beforeEach } from "vitest";
+
+describe("UI", () => {
+  beforeEach(async () => { await env.DB.exec("DELETE FROM merchant; DELETE FROM deal;"); });
+
+  it("GET / 返回 HTML 页面", async () => {
+    const res = await SELF.fetch("https://x/");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("<form"); // 含抓取表单
+    expect(html).toContain("/jobs"); // 前端会 POST /jobs
+  });
+
+  it("GET /merchants/:shopUuid/deals 返回团单 JSON", async () => {
+    await env.DB.exec("INSERT INTO merchant (shop_uuid,name) VALUES ('s1','店')");
+    await env.DB.exec("INSERT INTO deal (deal_id,shop_uuid,title,price,sales_count) VALUES ('d1','s1','护理',99,5)");
+    const res = await SELF.fetch("https://x/merchants/s1/deals");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = await res.json() as { deals: Array<{ title: string }> };
+    expect(body.deals).toHaveLength(1);
+    expect(body.deals[0].title).toBe("护理");
+  });
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `npx vitest run test/ui.test.ts`
+Expected: FAIL(`GET /` 走到 Task 13 的 stub 或 404;deals 路由不存在)。
+
+- [ ] **Step 3: 实现 src/ui/page.ts(内联 HTML + 原生 JS,无依赖)**
+
+```ts
+export const PAGE_HTML = `<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大众点评团单抓取</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+  form { display: flex; gap: .5rem; }
+  input[type=url] { flex: 1; padding: .5rem; }
+  button { padding: .5rem 1rem; cursor: pointer; }
+  #status { margin: 1rem 0; color: #555; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ddd; padding: .4rem .6rem; text-align: left; font-size: 14px; }
+  th { background: #f5f5f5; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <h1>大众点评单商家团单抓取</h1>
+  <form id="f">
+    <input type="url" id="url" placeholder="粘贴商家页面 URL" required>
+    <button type="submit">抓取</button>
+  </form>
+  <div id="status"></div>
+  <a id="csv" class="hidden" download>下载 CSV</a>
+  <table id="t" class="hidden"><thead><tr>
+    <th>团单</th><th>现价</th><th>原价</th><th>已售</th><th>品类</th>
+  </tr></thead><tbody></tbody></table>
+<script>
+const f = document.getElementById('f');
+const statusEl = document.getElementById('status');
+const table = document.getElementById('t');
+const tbody = table.querySelector('tbody');
+const csv = document.getElementById('csv');
+
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  table.classList.add('hidden'); csv.classList.add('hidden'); tbody.innerHTML = '';
+  statusEl.textContent = '创建任务…';
+  const r = await fetch('/jobs', { method: 'POST', headers: {'content-type':'application/json'},
+    body: JSON.stringify({ url: document.getElementById('url').value }) });
+  if (!r.ok) { statusEl.textContent = '创建失败:' + (await r.text()); return; }
+  const { jobId } = await r.json();
+  poll(jobId);
+});
+
+async function poll(jobId) {
+  const r = await fetch('/jobs/' + jobId);
+  const job = await r.json();
+  statusEl.textContent = '状态:' + job.status;
+  if (job.status === 'done') {
+    const stats = job.stats_json ? JSON.parse(job.stats_json) : {};
+    if (stats.shopUuid) await render(stats.shopUuid);
+    return;
+  }
+  if (job.status === 'failed' || job.status === 'awaiting_human') {
+    statusEl.textContent = '状态:' + job.status + (job.error ? '(' + job.error + ')' : '');
+    return;
+  }
+  setTimeout(() => poll(jobId), 2000);
+}
+
+async function render(shopUuid) {
+  const r = await fetch('/merchants/' + encodeURIComponent(shopUuid) + '/deals');
+  const { deals } = await r.json();
+  statusEl.textContent = '完成,共 ' + deals.length + ' 个团单';
+  for (const d of deals) {
+    const tr = document.createElement('tr');
+    for (const v of [d.title, d.price, d.market_price, d.sales_count, d.category]) {
+      const td = document.createElement('td'); td.textContent = v == null ? '' : v; tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.classList.remove('hidden');
+  csv.href = '/export/' + encodeURIComponent(shopUuid) + '.csv';
+  csv.classList.remove('hidden');
+}
+</script>
+</body>
+</html>`;
+```
+
+- [ ] **Step 4: 在 src/index.ts 的 Hono 应用上新增两条路由(其余 Task 13 路由保持不变)**
+
+```ts
+import { PAGE_HTML } from "./ui/page";
+
+// 在 const app = new Hono... 之后、export default app 之前加:
+
+app.get("/", (c) =>
+  c.html(PAGE_HTML),
+);
+
+app.get("/merchants/:shopUuid/deals", async (c) => {
+  const deals = await getDeals(c.env.DB, c.req.param("shopUuid"));
+  return c.json({ deals });
+});
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `npx vitest run test/ui.test.ts && npx vitest run`
+Expected: ui.test.ts 2 用例 PASS;全量套件 PASS。然后 `npx tsc --noEmit` 干净。
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/ui/page.ts src/index.ts test/ui.test.ts
+git commit -m "feat: 最小单页抓取界面"
+```
+
