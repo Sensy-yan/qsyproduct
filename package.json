@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/server.ts",
+    "capture": "tsx src/capture.ts",
     "test": "vitest run"
   },
   "dependencies": {
