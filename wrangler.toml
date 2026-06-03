@@ -1,0 +1,16 @@
+name = "dianping-merchant-scraper"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+browser = { binding = "BROWSER" }
+
+[[d1_databases]]
+binding = "DB"
+database_name = "scraper-db"
+database_id = "PLACEHOLDER_RUN_wrangler_d1_create"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "RAW"
+bucket_name = "scraper-raw"
