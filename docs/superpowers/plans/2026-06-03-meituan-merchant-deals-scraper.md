@@ -1697,3 +1697,17 @@ git add src/ui/page.ts src/index.ts test/ui.test.ts
 git commit -m "feat: 最小单页抓取界面"
 ```
 
+
+---
+
+## Task 16: 服务流程展示与导出(2026-06-03 追加)
+
+把已存库的服务流程露出来:`deal_item`(服务步骤)+ `deal_rule`(履约/使用规则)。recon-无关(读 D1 既有数据)。
+
+**改动:**
+- `src/db/repo.ts`:新增 `getDealProcess(db, dealId)`(单团单的 items+rules,items 按 step_order 排序)、`getItemsByShop(db, shopUuid)`、`getRulesByShop(db, shopUuid)`(JOIN deal 取整店)。
+- `src/index.ts`:新增 `GET /deals/:dealId/process`(JSON)、`GET /export/:shopUuid/items.csv`、`GET /export/:shopUuid/rules.csv`。
+- `src/ui/page.ts`:团单行可点击展开,显示「履约流程」(rule_type 中文标签 + 文本)与「服务步骤」(按 step_order:名称/规格/数量/时长);下载区新增「服务步骤 CSV」「履约规则 CSV」两个链接。
+- 测试:repo 三个新函数;`GET /deals/:dealId/process` JSON;两个 CSV 导出。
+
+rule_type 中文标签:booking→预约方式,refund→退款规则,usable_time→使用时间,applicable_shop→适用门店,notice→购买须知。
