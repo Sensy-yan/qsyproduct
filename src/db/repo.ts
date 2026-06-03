@@ -1,6 +1,7 @@
 import type { Merchant, Deal, DealItem, DealRule, Review } from "../types";
+import type { Db } from "./sqlite";
 
-export async function upsertMerchant(db: D1Database, m: Merchant): Promise<void> {
+export async function upsertMerchant(db: Db, m: Merchant): Promise<void> {
   await db
     .prepare(
       `INSERT INTO merchant (shop_uuid,name,category,address,city,source_url,scraped_at)
@@ -13,7 +14,7 @@ export async function upsertMerchant(db: D1Database, m: Merchant): Promise<void>
     .run();
 }
 
-export async function upsertDeals(db: D1Database, deals: Deal[]): Promise<void> {
+export async function upsertDeals(db: Db, deals: Deal[]): Promise<void> {
   const stmt = db.prepare(
     `INSERT INTO deal (deal_id,shop_uuid,title,price,market_price,sales_count,valid_from,valid_to,category,raw_json)
      VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -31,7 +32,7 @@ export async function upsertDeals(db: D1Database, deals: Deal[]): Promise<void> 
 }
 
 /** deal_item / deal_rule / review 无业务主键,按 dealId 先删后插,保证重跑幂等。 */
-export async function replaceItems(db: D1Database, dealId: string, items: DealItem[]): Promise<void> {
+export async function replaceItems(db: Db, dealId: string, items: DealItem[]): Promise<void> {
   await db.prepare("DELETE FROM deal_item WHERE deal_id=?").bind(dealId).run();
   if (items.length === 0) return;
   const stmt = db.prepare(
@@ -40,14 +41,14 @@ export async function replaceItems(db: D1Database, dealId: string, items: DealIt
   await db.batch(items.map((i) => stmt.bind(i.dealId, i.name, i.qty, i.spec, i.stepOrder, i.duration)));
 }
 
-export async function replaceRules(db: D1Database, dealId: string, rules: DealRule[]): Promise<void> {
+export async function replaceRules(db: Db, dealId: string, rules: DealRule[]): Promise<void> {
   await db.prepare("DELETE FROM deal_rule WHERE deal_id=?").bind(dealId).run();
   if (rules.length === 0) return;
   const stmt = db.prepare("INSERT INTO deal_rule (deal_id,rule_type,text) VALUES (?,?,?)");
   await db.batch(rules.map((r) => stmt.bind(r.dealId, r.ruleType, r.text)));
 }
 
-export async function replaceReviewsForShop(db: D1Database, shopUuid: string, reviews: Review[]): Promise<void> {
+export async function replaceReviewsForShop(db: Db, shopUuid: string, reviews: Review[]): Promise<void> {
   await db.prepare("DELETE FROM review WHERE shop_uuid=?").bind(shopUuid).run();
   if (reviews.length === 0) return;
   const stmt = db.prepare(
@@ -56,11 +57,11 @@ export async function replaceReviewsForShop(db: D1Database, shopUuid: string, re
   await db.batch(reviews.map((r) => stmt.bind(r.dealId, r.shopUuid, r.rating, r.text, r.userMasked, r.reviewDate)));
 }
 
-export async function getMerchant(db: D1Database, shopUuid: string): Promise<Record<string, unknown> | null> {
+export async function getMerchant(db: Db, shopUuid: string): Promise<Record<string, unknown> | null> {
   return db.prepare("SELECT * FROM merchant WHERE shop_uuid=?").bind(shopUuid).first();
 }
 
-export async function getDeals(db: D1Database, shopUuid: string): Promise<Array<{ salesCount: number } & Record<string, unknown>>> {
+export async function getDeals(db: Db, shopUuid: string): Promise<Array<{ salesCount: number } & Record<string, unknown>>> {
   const { results } = await db
     .prepare("SELECT *, sales_count AS salesCount FROM deal WHERE shop_uuid=?")
     .bind(shopUuid)
@@ -69,7 +70,7 @@ export async function getDeals(db: D1Database, shopUuid: string): Promise<Array<
 }
 
 export async function getDealProcess(
-  db: D1Database,
+  db: Db,
   dealId: string,
 ): Promise<{ items: Record<string, unknown>[]; rules: Record<string, unknown>[] }> {
   const items = await db
@@ -84,7 +85,7 @@ export async function getDealProcess(
   };
 }
 
-export async function getItemsByShop(db: D1Database, shopUuid: string): Promise<Record<string, unknown>[]> {
+export async function getItemsByShop(db: Db, shopUuid: string): Promise<Record<string, unknown>[]> {
   const { results } = await db
     .prepare(
       "SELECT di.deal_id, di.name, di.qty, di.spec, di.step_order, di.duration FROM deal_item di JOIN deal d ON di.deal_id=d.deal_id WHERE d.shop_uuid=? ORDER BY di.deal_id, di.step_order",
@@ -93,7 +94,7 @@ export async function getItemsByShop(db: D1Database, shopUuid: string): Promise<
   return results as Record<string, unknown>[];
 }
 
-export async function getRulesByShop(db: D1Database, shopUuid: string): Promise<Record<string, unknown>[]> {
+export async function getRulesByShop(db: Db, shopUuid: string): Promise<Record<string, unknown>[]> {
   const { results } = await db
     .prepare(
       "SELECT dr.deal_id, dr.rule_type, dr.text FROM deal_rule dr JOIN deal d ON dr.deal_id=d.deal_id WHERE d.shop_uuid=?",

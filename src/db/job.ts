@@ -1,8 +1,10 @@
 import type { JobStatus } from "../types";
+import type { Db } from "./sqlite";
+import { randomUUID } from "node:crypto";
 
 /** id 由调用方传入(编排层用 crypto.randomUUID());startedAt 由调用方传入,避免模块内取时间。 */
-export async function createJob(db: D1Database, merchantUrl: string, startedAt: number): Promise<string> {
-  const id = crypto.randomUUID();
+export async function createJob(db: Db, merchantUrl: string, startedAt: number): Promise<string> {
+  const id = randomUUID();
   await db
     .prepare("INSERT INTO job (id,merchant_url,status,started_at) VALUES (?,?,?,?)")
     .bind(id, merchantUrl, "pending", startedAt)
@@ -11,7 +13,7 @@ export async function createJob(db: D1Database, merchantUrl: string, startedAt: 
 }
 
 export async function setJobStatus(
-  db: D1Database,
+  db: Db,
   id: string,
   status: JobStatus,
   opts: { error?: string; finishedAt?: number; stats?: unknown } = {},
@@ -23,6 +25,6 @@ export async function setJobStatus(
     .run();
 }
 
-export async function getJob(db: D1Database, id: string): Promise<Record<string, unknown> | null> {
+export async function getJob(db: Db, id: string): Promise<Record<string, unknown> | null> {
   return db.prepare("SELECT * FROM job WHERE id=?").bind(id).first();
 }
