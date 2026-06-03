@@ -67,3 +67,37 @@ export async function getDeals(db: D1Database, shopUuid: string): Promise<Array<
     .all();
   return results as Array<{ salesCount: number } & Record<string, unknown>>;
 }
+
+export async function getDealProcess(
+  db: D1Database,
+  dealId: string,
+): Promise<{ items: Record<string, unknown>[]; rules: Record<string, unknown>[] }> {
+  const items = await db
+    .prepare("SELECT * FROM deal_item WHERE deal_id=? ORDER BY step_order")
+    .bind(dealId).all();
+  const rules = await db
+    .prepare("SELECT * FROM deal_rule WHERE deal_id=?")
+    .bind(dealId).all();
+  return {
+    items: items.results as Record<string, unknown>[],
+    rules: rules.results as Record<string, unknown>[],
+  };
+}
+
+export async function getItemsByShop(db: D1Database, shopUuid: string): Promise<Record<string, unknown>[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT di.deal_id, di.name, di.qty, di.spec, di.step_order, di.duration FROM deal_item di JOIN deal d ON di.deal_id=d.deal_id WHERE d.shop_uuid=? ORDER BY di.deal_id, di.step_order",
+    )
+    .bind(shopUuid).all();
+  return results as Record<string, unknown>[];
+}
+
+export async function getRulesByShop(db: D1Database, shopUuid: string): Promise<Record<string, unknown>[]> {
+  const { results } = await db
+    .prepare(
+      "SELECT dr.deal_id, dr.rule_type, dr.text FROM deal_rule dr JOIN deal d ON dr.deal_id=d.deal_id WHERE d.shop_uuid=?",
+    )
+    .bind(shopUuid).all();
+  return results as Record<string, unknown>[];
+}
