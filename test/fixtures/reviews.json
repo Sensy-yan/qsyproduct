@@ -1,0 +1,4 @@
+{ "data": { "reviews": [
+  { "dealId": "d1", "star": 5, "reviewBody": "服务很好", "userName": "张三丰", "addTime": 1700001000 },
+  { "rating": 4, "content": "还不错", "author": "李四", "addTime": 1700002000 }
+] } }

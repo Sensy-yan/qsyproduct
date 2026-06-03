@@ -1,0 +1,4 @@
+{ "data": { "dealList": [
+  { "dealId": "d1", "title": "双人面部护理套餐", "price": 99, "marketPrice": 199, "sales": 120, "category": "美容", "validFrom": 1700000000, "validTo": 1800000000 },
+  { "dealId": "d2", "title": "单人SPA", "price": 199, "originPrice": 399, "soldCount": 30, "category": "美容" }
+] } }
