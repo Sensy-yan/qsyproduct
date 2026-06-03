@@ -60,8 +60,12 @@ export function createDb(path: string): Db {
   };
 }
 
-/** 把 migrations/0001_init.sql 应用到库(建表)。 */
+/** 把 migrations/0001_init.sql 应用到库(建表)。幂等:已建表则跳过。 */
 export function applySchema(db: Db): void {
+  const existing = db._raw
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='job'")
+    .get();
+  if (existing) return;
   const sqlPath = fileURLToPath(new URL("../../migrations/0001_init.sql", import.meta.url));
   db._raw.exec(readFileSync(sqlPath, "utf8"));
 }
